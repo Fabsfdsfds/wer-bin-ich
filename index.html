@@ -1,19 +1,157 @@
 <!DOCTYPE html>
 <html>
 <head>
+  <meta charset="UTF-8">
   <title>Wer bin ich?</title>
+  <style>
+    body { font-family: sans-serif; max-width: 600px; margin: auto; padding: 20px; }
+    input, button, select { margin: 5px 0; padding: 5px; }
+    .hidden { display: none; }
+  </style>
 </head>
 <body>
 
 <h1>Wer bin ich?</h1>
 
-<select id="playerSelect"></select>
-<button onclick="showData()">Anzeigen</button>
+<div id="registerDiv">
+  <h2>Spieler anmelden</h2>
+  <input type="text" id="playerName" placeholder="Dein Name">
+  <button onclick="registerPlayer()">Anmelden</button>
+  <p id="registerMsg"></p>
+</div>
 
-<div id="result"></div>
+<div id="startDiv" class="hidden">
+  <h2>Runde starten</h2>
+  <button onclick="startRound()">Runde starten</button>
+</div>
+
+<div id="assignDiv" class="hidden">
+  <h2>Figur zuweisen</h2>
+  <p id="assignedText"></p>
+  <input type="text" id="characterInput" placeholder="Figur eingeben">
+  <button onclick="submitCharacter()">Absenden</button>
+</div>
+
+<div id="resultDiv" class="hidden">
+  <h2>Ergebnisse</h2>
+  <select id="resultSelect" onchange="showResult()">
+    <option value="">Dein Name wählen</option>
+  </select>
+  <div id="results"></div>
+</div>
 
 <script type="module">
-  // Firebase kommt später hier rein
+import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-app.js";
+import { getFirestore, collection, getDocs, setDoc, doc, updateDoc } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore.js";
+
+const firebaseConfig = {
+  apiKey: "HIER_DEIN_KEY",
+  authDomain: "HIER_DEIN_DOMAIN",
+  projectId: "HIER_DEIN_PROJECT_ID",
+  storageBucket: "HIER",
+  messagingSenderId: "HIER",
+  appId: "HIER"
+};
+
+const app = initializeApp(firebaseConfig);
+const db = getFirestore(app);
+
+let currentPlayer = "";
+let assignedPlayer = "";
+
+// Spieler anmelden
+async function registerPlayer() {
+  const name = document.getElementById("playerName").value.trim();
+  if (!name) return alert("Bitte Name eingeben!");
+  currentPlayer = name;
+
+  await setDoc(doc(db, "players", name), { name: name, assignedTo: "", character: "" });
+  document.getElementById("registerMsg").innerText = `Du bist angemeldet als ${name}`;
+  document.getElementById("playerName").value = "";
+
+  document.getElementById("startDiv").classList.remove("hidden");
+  loadResultSelect();
+}
+
+// Runde starten (Zufällige Zuordnung)
+async function startRound() {
+  const snapshot = await getDocs(collection(db, "players"));
+  const players = snapshot.docs.map(doc => doc.data().name);
+
+  // Shuffle Array und zuordnen
+  const shuffled = [...players];
+  for (let i = shuffled.length - 1; i > 0; i--) {
+    const j = Math.floor(Math.random() * (i + 1));
+    [shuffled[i], shuffled[j]] = [shuffled[j], shuffled[i]];
+  }
+
+  const assignments = {};
+  for (let i = 0; i < players.length; i++) {
+    const giver = players[i];
+    let receiver = shuffled[i];
+    if (giver === receiver) { // niemand sich selbst
+      receiver = shuffled[(i+1)%players.length];
+      [shuffled[i], shuffled[(i+1)%players.length]] = [shuffled[(i+1)%players.length], shuffled[i]];
+    }
+    assignments[giver] = receiver;
+    await updateDoc(doc(db, "players", giver), { assignedTo: receiver });
+  }
+
+  document.getElementById("startDiv").classList.add("hidden");
+  document.getElementById("assignDiv").classList.remove("hidden");
+  loadAssignedPlayer();
+}
+
+// Zeige welchem Spieler man die Figur zuweist
+async function loadAssignedPlayer() {
+  const docSnap = await getDocs(collection(db, "players"));
+  const players = docSnap.docs.map(d => d.data());
+  const me = players.find(p => p.name === currentPlayer);
+  assignedPlayer = me.assignedTo;
+  document.getElementById("assignedText").innerText = `Du weist ${assignedPlayer} eine Figur zu`;
+}
+
+// Figur absenden
+async function submitCharacter() {
+  const character = document.getElementById("characterInput").value.trim();
+  if (!character) return alert("Bitte Figur eingeben!");
+  await updateDoc(doc(db, "players", assignedPlayer), { character: character });
+  alert(`Figur für ${assignedPlayer} gespeichert!`);
+  document.getElementById("characterInput").value = "";
+  document.getElementById("assignDiv").classList.add("hidden");
+  document.getElementById("resultDiv").classList.remove("hidden");
+  loadResultSelect();
+}
+
+// Ergebnisse anzeigen
+async function loadResultSelect() {
+  const snapshot = await getDocs(collection(db, "players"));
+  const select = document.getElementById("resultSelect");
+  select.innerHTML = `<option value="">Dein Name wählen</option>`;
+  snapshot.docs.forEach(doc => {
+    const opt = document.createElement("option");
+    opt.value = doc.data().name;
+    opt.textContent = doc.data().name;
+    select.appendChild(opt);
+  });
+}
+
+async function showResult() {
+  const player = document.getElementById("resultSelect").value;
+  if (!player) return;
+  const snapshot = await getDocs(collection(db, "players"));
+  let html = "";
+  snapshot.docs.forEach(doc => {
+    const data = doc.data();
+    html += `<p>${data.name}: ${data.name === player ? '???' : data.character}</p>`;
+  });
+  document.getElementById("results").innerHTML = html;
+}
+
+window.registerPlayer = registerPlayer;
+window.startRound = startRound;
+window.submitCharacter = submitCharacter;
+window.showResult = showResult;
 </script>
 
 </body>
