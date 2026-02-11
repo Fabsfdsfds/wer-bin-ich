@@ -5,7 +5,7 @@
   <title>Wer bin ich?</title>
   <style>
     body { font-family: sans-serif; max-width: 600px; margin: auto; padding: 20px; }
-    input, button, select { margin: 5px 0; padding: 5px; }
+    input, button, select { margin: 5px 0; padding: 5px; width: 100%; }
     .hidden { display: none; }
   </style>
 </head>
@@ -13,6 +13,7 @@
 
 <h1>Wer bin ich?</h1>
 
+<!-- Spieler anmelden -->
 <div id="registerDiv">
   <h2>Spieler anmelden</h2>
   <input type="text" id="playerName" placeholder="Dein Name">
@@ -20,11 +21,13 @@
   <p id="registerMsg"></p>
 </div>
 
+<!-- Runde starten -->
 <div id="startDiv" class="hidden">
   <h2>Runde starten</h2>
-  <button onclick="startRound()">Runde starten</button>
+  <button onclick="startRound()">Neue Runde starten</button>
 </div>
 
+<!-- Figur zuweisen -->
 <div id="assignDiv" class="hidden">
   <h2>Figur zuweisen</h2>
   <p id="assignedText"></p>
@@ -32,6 +35,7 @@
   <button onclick="submitCharacter()">Absenden</button>
 </div>
 
+<!-- Ergebnisse -->
 <div id="resultDiv" class="hidden">
   <h2>Ergebnisse</h2>
   <select id="resultSelect" onchange="showResult()">
@@ -42,8 +46,9 @@
 
 <script type="module">
 import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-app.js";
-import { getFirestore, collection, getDocs, setDoc, doc, updateDoc } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore.js";
+import { getFirestore, collection, getDocs, setDoc, doc, updateDoc, deleteDoc } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore.js";
 
+// 🔹 Füge hier deine Firebase Config ein
 const firebaseConfig = {
   apiKey: "AIzaSyCuiS6zrw_zjRGVpM70nOMSiJezmm9EOeE",
   authDomain: "wer-bin-ich-a160b.firebaseapp.com",
@@ -53,13 +58,23 @@ const firebaseConfig = {
   appId: "1:40347667202:web:69d18b15506b7f2510501b"
 };
 
+// Firebase initialisieren
 const app = initializeApp(firebaseConfig);
 const db = getFirestore(app);
 
 let currentPlayer = "";
 let assignedPlayer = "";
 
-// Spieler anmelden
+// 🔹 Alte Runde löschen
+async function resetRound() {
+  const snapshot = await getDocs(collection(db, "players"));
+  for (const d of snapshot.docs) {
+    await deleteDoc(doc(db, "players", d.id));
+  }
+  console.log("Alte Runde gelöscht!");
+}
+
+// 🔹 Spieler anmelden
 async function registerPlayer() {
   const name = document.getElementById("playerName").value.trim();
   if (!name) return alert("Bitte Name eingeben!");
@@ -73,27 +88,29 @@ async function registerPlayer() {
   loadResultSelect();
 }
 
-// Runde starten (Zufällige Zuordnung)
+// 🔹 Runde starten
 async function startRound() {
+  await resetRound(); // alte Runde löschen
+
   const snapshot = await getDocs(collection(db, "players"));
   const players = snapshot.docs.map(doc => doc.data().name);
+  if (players.length < 2) return alert("Mindestens 2 Spieler nötig!");
 
-  // Shuffle Array und zuordnen
+  // Shuffle Array
   const shuffled = [...players];
   for (let i = shuffled.length - 1; i > 0; i--) {
     const j = Math.floor(Math.random() * (i + 1));
     [shuffled[i], shuffled[j]] = [shuffled[j], shuffled[i]];
   }
 
-  const assignments = {};
+  // Zuweisung speichern
   for (let i = 0; i < players.length; i++) {
     const giver = players[i];
     let receiver = shuffled[i];
-    if (giver === receiver) { // niemand sich selbst
+    if (giver === receiver) {
       receiver = shuffled[(i+1)%players.length];
       [shuffled[i], shuffled[(i+1)%players.length]] = [shuffled[(i+1)%players.length], shuffled[i]];
     }
-    assignments[giver] = receiver;
     await updateDoc(doc(db, "players", giver), { assignedTo: receiver });
   }
 
@@ -102,16 +119,16 @@ async function startRound() {
   loadAssignedPlayer();
 }
 
-// Zeige welchem Spieler man die Figur zuweist
+// 🔹 Zeige welchem Spieler man die Figur zuweist
 async function loadAssignedPlayer() {
-  const docSnap = await getDocs(collection(db, "players"));
-  const players = docSnap.docs.map(d => d.data());
-  const me = players.find(p => p.name === currentPlayer);
+  const snapshot = await getDocs(collection(db, "players"));
+  const me = snapshot.docs.map(d => d.data()).find(p => p.name === currentPlayer);
+  if (!me) return;
   assignedPlayer = me.assignedTo;
   document.getElementById("assignedText").innerText = `Du weist ${assignedPlayer} eine Figur zu`;
 }
 
-// Figur absenden
+// 🔹 Figur absenden
 async function submitCharacter() {
   const character = document.getElementById("characterInput").value.trim();
   if (!character) return alert("Bitte Figur eingeben!");
@@ -123,7 +140,7 @@ async function submitCharacter() {
   loadResultSelect();
 }
 
-// Ergebnisse anzeigen
+// 🔹 Ergebnisse anzeigen
 async function loadResultSelect() {
   const snapshot = await getDocs(collection(db, "players"));
   const select = document.getElementById("resultSelect");
@@ -152,6 +169,7 @@ window.registerPlayer = registerPlayer;
 window.startRound = startRound;
 window.submitCharacter = submitCharacter;
 window.showResult = showResult;
+
 </script>
 
 </body>
