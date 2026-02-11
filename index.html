@@ -14,7 +14,7 @@
 <h1>Wer bin ich?</h1>
 
 <!-- Spieler anmelden -->
-<div id="registerDiv">
+<div id="registerDiv" class="hidden">
   <h2>Spieler anmelden</h2>
   <input type="text" id="playerName" placeholder="Dein Name">
   <button onclick="registerPlayer()">Anmelden</button>
@@ -22,7 +22,7 @@
 </div>
 
 <!-- Runde starten -->
-<div id="startDiv" class="hidden">
+<div id="startDiv">
   <h2>Runde starten</h2>
   <button onclick="startRound()">Neue Runde starten</button>
 </div>
@@ -48,7 +48,7 @@
 import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-app.js";
 import { getFirestore, collection, getDocs, setDoc, doc, updateDoc, deleteDoc } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore.js";
 
-// 🔹 Füge hier deine Firebase Config ein
+// 🔹 Firebase Config
 const firebaseConfig = {
   apiKey: "AIzaSyCuiS6zrw_zjRGVpM70nOMSiJezmm9EOeE",
   authDomain: "wer-bin-ich-a160b.firebaseapp.com",
@@ -69,11 +69,10 @@ let assignedPlayer = "";
 async function resetRound() {
   const snapshot = await getDocs(collection(db, "players"));
   for (const d of snapshot.docs) {
-    await updateDoc(doc(db, "players", d.id), { assignedTo: "", character: "" });
+    await deleteDoc(doc(db, "players", d.id));
   }
-  console.log("Alte Runde zurückgesetzt!");
+  console.log("Alte Runde gelöscht!");
 }
-
 
 // 🔹 Spieler anmelden
 async function registerPlayer() {
@@ -85,39 +84,70 @@ async function registerPlayer() {
   document.getElementById("registerMsg").innerText = `Du bist angemeldet als ${name}`;
   document.getElementById("playerName").value = "";
 
-  document.getElementById("startDiv").classList.remove("hidden");
   loadResultSelect();
+
+  // Sobald mindestens 2 Spieler angemeldet sind → Zuordnung freischalten
+  const snapshot = await getDocs(collection(db, "players"));
+  if (snapshot.docs.length >= 2) {
+    document.getElementById("assignDiv").classList.remove("hidden");
+    await assignPlayers();
+  }
 }
 
 // 🔹 Runde starten
 async function startRound() {
-  await resetRound(); // alte Runde löschen
+  await resetRound(); // alte Spieler löschen
 
+  // Sichtbarkeit
+  document.getElementById("registerDiv").classList.remove("hidden");
+  document.getElementById("startDiv").classList.add("hidden");
+  document.getElementById("assignDiv").classList.add("hidden");
+  document.getElementById("resultDiv").classList.add("hidden");
+
+  alert("Alte Runde gelöscht! Jetzt können sich neue Spieler anmelden.");
+}
+
+// 🔹 Zufällige Zuordnung (Derangement)
+function assignDerangement(players) {
+  let shuffled = [...players];
+  let valid = false;
+
+  while (!valid) {
+    // Array mischen
+    for (let i = shuffled.length - 1; i > 0; i--) {
+      const j = Math.floor(Math.random() * (i + 1));
+      [shuffled[i], shuffled[j]] = [shuffled[j], shuffled[i]];
+    }
+
+    // Prüfen, ob jemand sich selbst zugewiesen hat
+    valid = true;
+    for (let i = 0; i < players.length; i++) {
+      if (players[i] === shuffled[i]) {
+        valid = false;
+        break;
+      }
+    }
+  }
+
+  // Zuordnung als Objekt zurückgeben
+  const assignments = {};
+  for (let i = 0; i < players.length; i++) {
+    assignments[players[i]] = shuffled[i];
+  }
+  return assignments;
+}
+
+// 🔹 Spieler zuweisen
+async function assignPlayers() {
   const snapshot = await getDocs(collection(db, "players"));
   const players = snapshot.docs.map(doc => doc.data().name);
-  if (players.length < 2) return alert("Mindestens 2 Spieler nötig!");
 
+  const assignments = assignDerangement(players);
 
-  // Shuffle Array
-  const shuffled = [...players];
-  for (let i = shuffled.length - 1; i > 0; i--) {
-    const j = Math.floor(Math.random() * (i + 1));
-    [shuffled[i], shuffled[j]] = [shuffled[j], shuffled[i]];
+  for (const giver of players) {
+    await updateDoc(doc(db, "players", giver), { assignedTo: assignments[giver] });
   }
 
-  // Zuweisung speichern
-  for (let i = 0; i < players.length; i++) {
-    const giver = players[i];
-    let receiver = shuffled[i];
-    if (giver === receiver) {
-      receiver = shuffled[(i+1)%players.length];
-      [shuffled[i], shuffled[(i+1)%players.length]] = [shuffled[(i+1)%players.length], shuffled[i]];
-    }
-    await updateDoc(doc(db, "players", giver), { assignedTo: receiver });
-  }
-
-  document.getElementById("startDiv").classList.add("hidden");
-  document.getElementById("assignDiv").classList.remove("hidden");
   loadAssignedPlayer();
 }
 
