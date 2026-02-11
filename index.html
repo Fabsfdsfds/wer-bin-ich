@@ -4,7 +4,26 @@
   <meta charset="UTF-8">
   <title>Wer bin ich?</title>
   <style>
-    body { font-family: sans-serif; max-width: 600px; margin: auto; padding: 20px; }
+    body {
+      font-family: sans-serif;
+      max-width: 600px;
+      margin: auto;
+      padding: 20px;
+      min-height: 100vh;
+      background-image: url("https://media.giphy.com/media/3o7TKtnuHOHHUjR38Y/giphy.gif");
+      background-size: cover;
+      background-position: center;
+      background-repeat: no-repeat;
+      background-attachment: fixed;
+    }
+
+    .app {
+      background: rgba(255, 255, 255, 0.85);
+      padding: 20px;
+      border-radius: 12px;
+      box-shadow: 0 4px 18px rgba(0, 0, 0, 0.2);
+    }
+
     input, button, select { margin: 5px 0; padding: 5px; width: 100%; }
     .hidden { display: none; }
     <img src="https://media.tenor.com/d9-oc__al-QAAAAM/subway-surfers.gif">
@@ -12,6 +31,7 @@
 </head>
 <body>
 
+<div class="app">
 <h1>Wer bin ich?</h1>
 
 <!-- Spieler anmelden -->
@@ -43,6 +63,7 @@
     <option value="">Dein Name wählen</option>
   </select>
   <div id="results"></div>
+</div>
 </div>
 
 <script type="module">
