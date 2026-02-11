@@ -6,11 +6,11 @@
   <style>
     body {
       font-family: sans-serif;
-      max-width: 600px;
+      max-width: 1100px;
       margin: auto;
       padding: 20px;
       min-height: 100vh;
-      background: #f2f4f8;
+      background: linear-gradient(140deg, #e7edf8 0%, #f5f1ff 100%);
     }
 
     .app {
@@ -43,6 +43,63 @@
       width: auto;
       padding: 4px 8px;
       margin: 0;
+    }
+
+    .card-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+      gap: 14px;
+      margin-top: 14px;
+    }
+
+    .player-card {
+      border-radius: 14px;
+      overflow: hidden;
+      min-height: 300px;
+      position: relative;
+      color: #fff;
+      border: 1px solid rgba(255, 255, 255, 0.35);
+      box-shadow: 0 8px 20px rgba(16, 24, 40, 0.3);
+      background: #29324f;
+      background-size: cover;
+      background-position: center;
+      display: flex;
+      align-items: flex-end;
+    }
+
+    .player-card::before {
+      content: "";
+      position: absolute;
+      inset: 0;
+      background: linear-gradient(to top, rgba(10, 12, 25, 0.86) 15%, rgba(10, 12, 25, 0.35) 55%, rgba(10, 12, 25, 0.1) 100%);
+    }
+
+    .card-content {
+      position: relative;
+      z-index: 1;
+      width: 100%;
+      padding: 12px;
+      backdrop-filter: blur(1.5px);
+    }
+
+    .card-label {
+      text-transform: uppercase;
+      letter-spacing: 0.08em;
+      font-size: 0.72rem;
+      margin-bottom: 6px;
+      opacity: 0.85;
+    }
+
+    .card-name {
+      margin: 0;
+      font-size: 1.2rem;
+      line-height: 1.2;
+    }
+
+    .card-character {
+      margin: 6px 0 0;
+      font-size: 0.95rem;
+      opacity: 0.95;
     }
   </style>
 </head>
@@ -110,6 +167,7 @@ const clientId = localStorage.getItem("werBinIchClientId") || crypto.randomUUID(
 localStorage.setItem("werBinIchClientId", clientId);
 const roundRef = doc(db, "meta", "round");
 let roundStateCache = null;
+const imageCache = {};
 
 async function getRoundDataSafe() {
   try {
@@ -311,13 +369,73 @@ async function showResult() {
   }
 
   const snapshot = await getDocs(collection(db, "players"));
-  let html = "";
-  snapshot.docs.forEach(d => {
+  const cards = [];
+  for (const d of snapshot.docs) {
     const data = d.data();
-    if (!data.name) return;
-    html += `<p>${data.name}: ${data.name === currentPlayer ? "???" : (data.character || "—")}${data.guessed ? " ✅ erraten" : ""}</p>`;
-  });
-  document.getElementById("results").innerHTML = html;
+    if (!data.name) continue;
+
+    const visibleCharacter = data.name === currentPlayer ? "???" : (data.character || "—");
+    const searchTarget = data.character || data.name;
+    const backgroundImage = await getImageFromWebSearch(searchTarget);
+    const escapedName = escapeHtml(data.name);
+    const escapedCharacter = escapeHtml(visibleCharacter);
+    const guessedBadge = data.guessed ? " · ✅ erraten" : "";
+
+    cards.push(`
+      <article class="player-card" style="background-image:url('${backgroundImage}')">
+        <div class="card-content">
+          <div class="card-label">Trading Card${guessedBadge}</div>
+          <h3 class="card-name">${escapedName}</h3>
+          <p class="card-character">${escapedCharacter}</p>
+        </div>
+      </article>
+    `);
+  }
+
+  document.getElementById("results").innerHTML = `<div class="card-grid">${cards.join("")}</div>`;
+}
+
+function escapeHtml(text) {
+  return String(text)
+    .replaceAll("&", "&amp;")
+    .replaceAll("<", "&lt;")
+    .replaceAll(">", "&gt;")
+    .replaceAll('"', "&quot;")
+    .replaceAll("'", "&#039;");
+}
+
+function fallbackImage(query) {
+  return `https://source.unsplash.com/featured/900x1200/?${encodeURIComponent(query + " portrait")}`;
+}
+
+async function getImageFromWebSearch(query) {
+  const safeQuery = (query || "Person").trim();
+  if (imageCache[safeQuery]) return imageCache[safeQuery];
+
+  try {
+    const searchUrl = `https://de.wikipedia.org/w/api.php?action=query&list=search&format=json&origin=*&srsearch=${encodeURIComponent(safeQuery)}`;
+    const searchResponse = await fetch(searchUrl);
+    const searchData = await searchResponse.json();
+    const firstResult = searchData?.query?.search?.[0]?.title;
+    if (!firstResult) {
+      imageCache[safeQuery] = fallbackImage(safeQuery);
+      return imageCache[safeQuery];
+    }
+
+    const imageUrl = `https://de.wikipedia.org/w/api.php?action=query&prop=pageimages&piprop=original&titles=${encodeURIComponent(firstResult)}&format=json&origin=*`;
+    const imageResponse = await fetch(imageUrl);
+    const imageData = await imageResponse.json();
+    const pages = imageData?.query?.pages || {};
+    const page = Object.values(pages)[0];
+    const webImage = page?.original?.source;
+
+    imageCache[safeQuery] = webImage || fallbackImage(safeQuery);
+    return imageCache[safeQuery];
+  } catch (error) {
+    console.error("Websuche für Kartenhintergrund fehlgeschlagen:", error);
+    imageCache[safeQuery] = fallbackImage(safeQuery);
+    return imageCache[safeQuery];
+  }
 }
 
 async function guessCharacter() {
