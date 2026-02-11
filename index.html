@@ -377,8 +377,9 @@ async function showResult() {
 
   const cardsWithImage = await Promise.all(players.map(async (data) => {
     const visibleCharacter = data.name === currentPlayer ? "???" : (data.character || "—");
-    const searchTarget = data.character || data.name;
-    const backgroundImage = await getImageFromWebSearch(searchTarget);
+    const backgroundImage = data.name === currentPlayer
+      ? fallbackImage("hidden-player")
+      : await getImageFromWebSearch(data.character || data.name);
     return { data, visibleCharacter, backgroundImage };
   }));
 
@@ -432,11 +433,18 @@ async function getImageFromWebSearch(query) {
   const safeQuery = (query || "Person").trim();
   if (imageCache[safeQuery]) return imageCache[safeQuery];
 
+  const wikidataImage = await getImageFromWikidata(safeQuery);
+  if (wikidataImage) {
+    imageCache[safeQuery] = wikidataImage;
+    return wikidataImage;
+  }
+
   try {
-    const searchUrl = `https://de.wikipedia.org/w/api.php?action=query&list=search&format=json&origin=*&srsearch=${encodeURIComponent(safeQuery)}`;
+    const searchUrl = `https://de.wikipedia.org/w/api.php?action=query&list=search&format=json&origin=*&srsearch=${encodeURIComponent(safeQuery)}&srlimit=5`;
     const searchResponse = await fetch(searchUrl);
     const searchData = await searchResponse.json();
-    const firstResult = searchData?.query?.search?.[0]?.title;
+    const bestResult = chooseBestWikipediaResult(searchData?.query?.search || [], safeQuery);
+    const firstResult = bestResult?.title;
     if (!firstResult) {
       imageCache[safeQuery] = fallbackImage(safeQuery);
       return imageCache[safeQuery];
@@ -455,6 +463,88 @@ async function getImageFromWebSearch(query) {
     console.error("Websuche für Kartenhintergrund fehlgeschlagen:", error);
     imageCache[safeQuery] = fallbackImage(safeQuery);
     return imageCache[safeQuery];
+  }
+}
+
+function normalizeForSearch(text) {
+  return String(text || "")
+    .toLowerCase()
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .replace(/[^a-z0-9\s]/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+function chooseBestWikipediaResult(results, query) {
+  if (!Array.isArray(results) || results.length === 0) return null;
+
+  const normalizedQuery = normalizeForSearch(query);
+  const queryTokens = normalizedQuery.split(" ").filter(Boolean);
+
+  const scored = results.map((item) => {
+    const title = normalizeForSearch(item?.title);
+    const snippet = normalizeForSearch(item?.snippet || "");
+
+    let score = 0;
+    if (title === normalizedQuery) score += 100;
+    if (title.includes(normalizedQuery)) score += 30;
+    if (snippet.includes(normalizedQuery)) score += 10;
+
+    for (const token of queryTokens) {
+      if (title.includes(token)) score += 6;
+      if (snippet.includes(token)) score += 2;
+    }
+
+    return { item, score };
+  });
+
+  scored.sort((a, b) => b.score - a.score);
+  return scored[0]?.item || null;
+}
+
+function buildCommonsFilePath(fileName) {
+  if (!fileName) return "";
+  return `https://commons.wikimedia.org/wiki/Special:FilePath/${encodeURIComponent(fileName.replace(/ /g, "_"))}`;
+}
+
+async function getImageFromWikidata(query) {
+  try {
+    const searchUrl = `https://www.wikidata.org/w/api.php?action=wbsearchentities&search=${encodeURIComponent(query)}&language=de&uselang=de&type=item&format=json&origin=*&limit=8`;
+    const searchResponse = await fetch(searchUrl);
+    const searchData = await searchResponse.json();
+    const candidates = searchData?.search || [];
+    if (!candidates.length) return "";
+
+    const normalizedQuery = normalizeForSearch(query);
+    const rankedCandidates = candidates
+      .map((candidate) => {
+        const label = normalizeForSearch(candidate?.label);
+        const description = normalizeForSearch(candidate?.description);
+
+        let score = 0;
+        if (label === normalizedQuery) score += 100;
+        if (label.includes(normalizedQuery)) score += 35;
+        if (description.includes(normalizedQuery)) score += 8;
+
+        return { candidate, score };
+      })
+      .sort((a, b) => b.score - a.score)
+      .map((entry) => entry.candidate);
+
+    for (const candidate of rankedCandidates) {
+      const entityUrl = `https://www.wikidata.org/wiki/Special:EntityData/${candidate.id}.json`;
+      const entityResponse = await fetch(entityUrl);
+      const entityData = await entityResponse.json();
+      const claims = entityData?.entities?.[candidate.id]?.claims;
+      const imageFile = claims?.P18?.[0]?.mainsnak?.datavalue?.value;
+      if (imageFile) return buildCommonsFilePath(imageFile);
+    }
+
+    return "";
+  } catch (error) {
+    console.warn("Wikidata-Bildsuche fehlgeschlagen:", error);
+    return "";
   }
 }
 
