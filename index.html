@@ -92,7 +92,7 @@ import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.0/fireba
 import { getFirestore, collection, getDocs, setDoc, doc, updateDoc, deleteDoc, getDoc, onSnapshot } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore.js";
 
 const firebaseConfig = {
-  apiKey: typeof api_key !== "undefined" ? api_key : "",
+  apiKey: "AIzaSyCuiS6zrw_zjRGVpM70nOMSiJezmm9EOeE",
   authDomain: "wer-bin-ich-a160b.firebaseapp.com",
   projectId: "wer-bin-ich-a160b",
   storageBucket: "wer-bin-ich-a160b.firebasestorage.app",
@@ -109,33 +109,16 @@ let assignedPlayer = "";
 const clientId = localStorage.getItem("werBinIchClientId") || crypto.randomUUID();
 localStorage.setItem("werBinIchClientId", clientId);
 const roundRef = doc(db, "meta", "round");
-let roundStateCache = null;
-
-async function getRoundDataSafe() {
-  try {
-    const roundSnap = await getDoc(roundRef);
-    roundStateCache = roundSnap.exists() ? roundSnap.data() : null;
-    return roundStateCache;
-  } catch (error) {
-    console.error("Round-Status konnte nicht geladen werden:", error);
-    return roundStateCache;
-  }
-}
 
 function showScreen(screen) {
   document.getElementById("registerDiv").classList.toggle("hidden", screen !== "register");
   document.getElementById("startDiv").classList.toggle("hidden", screen !== "start");
   document.getElementById("assignDiv").classList.toggle("hidden", screen !== "assign");
   document.getElementById("resultDiv").classList.toggle("hidden", screen !== "result");
-  if (screen !== "result") document.getElementById("guessMsg").innerText = "";
 }
 
 function isHost(roundData) {
   return roundData && roundData.hostId === clientId;
-}
-
-function updateHostControls(roundData) {
-  document.getElementById("abortRoundBtn").classList.toggle("hidden", !isHost(roundData));
 }
 
 async function registerPlayer() {
@@ -146,6 +129,7 @@ async function registerPlayer() {
   localStorage.setItem("werBinIchName", name);
 
   await setDoc(doc(db, "players", name), { name, assignedTo: "", character: "", ownerId: clientId, guessed: false });
+  await setDoc(doc(db, "players", name), { name, assignedTo: "", character: "", ownerId: clientId });
   document.getElementById("registerMsg").innerText = `Du bist angemeldet als ${name}`;
   document.getElementById("playerName").value = "";
   await renderPlayers();
@@ -165,6 +149,10 @@ async function startRound() {
 
   await renderPlayers();
   alert("Anmelden ist jetzt sichtbar. Als Starter kannst du Namen entfernen und dann auf 'Runde starten' klicken.");
+  await setDoc(roundRef, { phase: "register", hostId: clientId, startedAt: Date.now() });
+  showScreen("register");
+  await renderPlayers();
+  alert("Anmelden ist jetzt für alle sichtbar. Als Starter kannst du Namen entfernen und dann auf 'Runde starten' klicken.");
 }
 
 function assignDerangement(players) {
@@ -196,6 +184,7 @@ function assignDerangement(players) {
 async function assignPlayers() {
   const snapshot = await getDocs(collection(db, "players"));
   const players = snapshot.docs.map(d => d.data().name).filter(Boolean);
+  const players = snapshot.docs.map(d => d.data().name);
 
   if (players.length < 2) {
     alert("Mindestens 2 Spieler benötigt.");
@@ -213,6 +202,8 @@ async function assignPlayers() {
 
 async function beginAssignment() {
   const roundData = await getRoundDataSafe();
+  const roundSnap = await getDoc(roundRef);
+  const roundData = roundSnap.exists() ? roundSnap.data() : null;
 
   if (!isHost(roundData)) {
     alert("Nur der Starter kann die Runde starten.");
@@ -230,6 +221,7 @@ async function beginAssignment() {
     showScreen("assign");
     await loadAssignedPlayer();
   }
+  await updateDoc(roundRef, { phase: "assign" });
 }
 
 async function loadAssignedPlayer() {
@@ -256,6 +248,8 @@ async function submitCharacter() {
 
 async function renderPlayers() {
   const roundData = await getRoundDataSafe();
+  const roundSnap = await getDoc(roundRef);
+  const roundData = roundSnap.exists() ? roundSnap.data() : null;
 
   const snapshot = await getDocs(collection(db, "players"));
   const list = document.getElementById("playerList");
@@ -286,6 +280,11 @@ async function renderPlayers() {
 
 async function removePlayer(name) {
   const roundData = await getRoundDataSafe();
+}
+
+async function removePlayer(name) {
+  const roundSnap = await getDoc(roundRef);
+  const roundData = roundSnap.exists() ? roundSnap.data() : null;
 
   if (!isHost(roundData)) {
     alert("Nur der Starter kann Spieler entfernen.");
@@ -308,6 +307,7 @@ async function showResult() {
     const data = d.data();
     if (!data.name) return;
     html += `<p>${data.name}: ${data.name === currentPlayer ? "???" : (data.character || "—")}${data.guessed ? " ✅ erraten" : ""}</p>`;
+    html += `<p>${data.name}: ${data.name === currentPlayer ? "???" : (data.character || "—")}</p>`;
   });
   document.getElementById("results").innerHTML = html;
 }
@@ -355,6 +355,10 @@ function subscribeRound() {
       roundStateCache = null;
       showScreen("start");
       updateHostControls(null);
+function subscribeRound() {
+  onSnapshot(roundRef, async (snap) => {
+    if (!snap.exists()) {
+      showScreen("start");
       return;
     }
 
