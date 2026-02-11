@@ -363,49 +363,69 @@ async function removePlayer(name) {
 }
 
 async function showResult() {
+  const resultsEl = document.getElementById("results");
+
   if (!currentPlayer) {
-    document.getElementById("results").innerHTML = "<p>Bitte zuerst anmelden.</p>";
+    resultsEl.innerHTML = "<p>Bitte zuerst anmelden.</p>";
     return;
   }
 
   const snapshot = await getDocs(collection(db, "players"));
-  const cards = [];
-  for (const d of snapshot.docs) {
-    const data = d.data();
-    if (!data.name) continue;
+  const players = snapshot.docs
+    .map(d => d.data())
+    .filter(data => data?.name);
 
+  const cardsWithImage = await Promise.all(players.map(async (data) => {
     const visibleCharacter = data.name === currentPlayer ? "???" : (data.character || "—");
     const searchTarget = data.character || data.name;
     const backgroundImage = await getImageFromWebSearch(searchTarget);
-    const escapedName = escapeHtml(data.name);
-    const escapedCharacter = escapeHtml(visibleCharacter);
+    return { data, visibleCharacter, backgroundImage };
+  }));
+
+  const grid = document.createElement("div");
+  grid.className = "card-grid";
+
+  cardsWithImage.forEach(({ data, visibleCharacter, backgroundImage }) => {
     const guessedBadge = data.guessed ? " · ✅ erraten" : "";
 
-    cards.push(`
-      <article class="player-card" style="background-image:url('${backgroundImage}')">
-        <div class="card-content">
-          <div class="card-status">Spieler${guessedBadge}</div>
-          <h3 class="card-name">${escapedName}</h3>
-          <p class="card-character">${escapedCharacter}</p>
-        </div>
-      </article>
-    `);
-  }
+    const card = document.createElement("article");
+    card.className = "player-card";
+    card.style.backgroundImage = `url("${normalizeImageUrl(backgroundImage)}")`;
 
-  document.getElementById("results").innerHTML = `<div class="card-grid">${cards.join("")}</div>`;
+    const content = document.createElement("div");
+    content.className = "card-content";
+
+    const status = document.createElement("div");
+    status.className = "card-status";
+    status.textContent = `Spieler${guessedBadge}`;
+
+    const name = document.createElement("h3");
+    name.className = "card-name";
+    name.textContent = data.name;
+
+    const character = document.createElement("p");
+    character.className = "card-character";
+    character.textContent = visibleCharacter;
+
+    content.appendChild(status);
+    content.appendChild(name);
+    content.appendChild(character);
+    card.appendChild(content);
+    grid.appendChild(card);
+  });
+
+  resultsEl.innerHTML = "";
+  resultsEl.appendChild(grid);
 }
 
-function escapeHtml(text) {
-  return String(text)
-    .replaceAll("&", "&amp;")
-    .replaceAll("<", "&lt;")
-    .replaceAll(">", "&gt;")
-    .replaceAll('"', "&quot;")
-    .replaceAll("'", "&#039;");
+function normalizeImageUrl(url) {
+  if (!url) return "";
+  return String(url).replace(/"/g, "%22");
 }
 
 function fallbackImage(query) {
-  return `https://source.unsplash.com/featured/900x1200/?${encodeURIComponent(query + " portrait")}`;
+  const seed = encodeURIComponent((query || "person").toLowerCase());
+  return `https://picsum.photos/seed/${seed}/900/1200`;
 }
 
 async function getImageFromWebSearch(query) {
