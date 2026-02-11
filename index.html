@@ -376,9 +376,9 @@ async function showResult() {
     .filter(data => data?.name);
 
   const cardsWithImage = await Promise.all(players.map(async (data) => {
-    const visibleCharacter = data.name === currentPlayer ? "???" : (data.character || "—");
+    const visibleCharacter = data.name === currentPlayer ? "?" : (data.character || "—");
     const backgroundImage = data.name === currentPlayer
-      ? fallbackImage("hidden-player")
+      ? questionMarkImage()
       : await getImageFromWebSearch(data.character || data.name);
     return { data, visibleCharacter, backgroundImage };
   }));
@@ -429,9 +429,30 @@ function fallbackImage(query) {
   return `https://picsum.photos/seed/${seed}/900/1200`;
 }
 
+
+function questionMarkImage() {
+  const svg = `<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 900 1200'>
+    <defs>
+      <linearGradient id='bg' x1='0' y1='0' x2='1' y2='1'>
+        <stop offset='0%' stop-color='#232946'/>
+        <stop offset='100%' stop-color='#0f172a'/>
+      </linearGradient>
+    </defs>
+    <rect width='900' height='1200' fill='url(#bg)'/>
+    <text x='450' y='690' text-anchor='middle' font-family='Arial, sans-serif' font-size='500' font-weight='700' fill='rgba(255,255,255,0.9)'>?</text>
+  </svg>`;
+  return `data:image/svg+xml;charset=UTF-8,${encodeURIComponent(svg)}`;
+}
+
 async function getImageFromWebSearch(query) {
   const safeQuery = (query || "Person").trim();
   if (imageCache[safeQuery]) return imageCache[safeQuery];
+
+  const openverseImage = await getImageFromOpenverse(safeQuery);
+  if (openverseImage) {
+    imageCache[safeQuery] = openverseImage;
+    return openverseImage;
+  }
 
   const wikidataImage = await getImageFromWikidata(safeQuery);
   if (wikidataImage) {
@@ -439,33 +460,82 @@ async function getImageFromWebSearch(query) {
     return wikidataImage;
   }
 
+  const wikiImage = await getImageFromWikipedia(safeQuery);
+  if (wikiImage) {
+    imageCache[safeQuery] = wikiImage;
+    return wikiImage;
+  }
+
+  const unsplashImage = getImageFromUnsplash(safeQuery);
+  imageCache[safeQuery] = unsplashImage;
+  return unsplashImage;
+}
+
+function getImageFromUnsplash(query) {
+  const encodedQuery = encodeURIComponent(query || "Person");
+  return `https://source.unsplash.com/featured/900x1200/?${encodedQuery},portrait`;
+}
+
+async function getImageFromOpenverse(query) {
   try {
-    const searchUrl = `https://de.wikipedia.org/w/api.php?action=query&list=search&format=json&origin=*&srsearch=${encodeURIComponent(safeQuery)}&srlimit=5`;
+    const url = `https://api.openverse.org/v1/images/?q=${encodeURIComponent(query)}&page_size=12&size=large`;
+    const response = await fetch(url);
+    const data = await response.json();
+    const results = data?.results || [];
+    if (!results.length) return "";
+
+    const normalizedQuery = normalizeForSearch(query);
+    const queryTokens = normalizedQuery.split(" ").filter(Boolean);
+    const ranked = results
+      .map((item) => {
+        const title = normalizeForSearch(item?.title);
+        const creator = normalizeForSearch(item?.creator);
+        const tags = Array.isArray(item?.tags)
+          ? normalizeForSearch(item.tags.map((tag) => tag?.name || "").join(" "))
+          : "";
+
+        let score = 0;
+        if (title === normalizedQuery) score += 90;
+        if (title.includes(normalizedQuery)) score += 30;
+        if (creator.includes(normalizedQuery)) score += 12;
+        if (tags.includes(normalizedQuery)) score += 20;
+
+        for (const token of queryTokens) {
+          if (title.includes(token)) score += 5;
+          if (tags.includes(token)) score += 3;
+        }
+
+        return { item, score };
+      })
+      .sort((a, b) => b.score - a.score);
+
+    return ranked[0]?.item?.url || "";
+  } catch (error) {
+    console.warn("Openverse-Bildsuche fehlgeschlagen:", error);
+    return "";
+  }
+}
+
+async function getImageFromWikipedia(query) {
+  try {
+    const searchUrl = `https://de.wikipedia.org/w/api.php?action=query&list=search&format=json&origin=*&srsearch=${encodeURIComponent(query)}&srlimit=5`;
     const searchResponse = await fetch(searchUrl);
     const searchData = await searchResponse.json();
-    const bestResult = chooseBestWikipediaResult(searchData?.query?.search || [], safeQuery);
+    const bestResult = chooseBestWikipediaResult(searchData?.query?.search || [], query);
     const firstResult = bestResult?.title;
-    if (!firstResult) {
-      imageCache[safeQuery] = fallbackImage(safeQuery);
-      return imageCache[safeQuery];
-    }
+    if (!firstResult) return "";
 
     const imageUrl = `https://de.wikipedia.org/w/api.php?action=query&prop=pageimages&piprop=original&titles=${encodeURIComponent(firstResult)}&format=json&origin=*`;
     const imageResponse = await fetch(imageUrl);
     const imageData = await imageResponse.json();
     const pages = imageData?.query?.pages || {};
     const page = Object.values(pages)[0];
-    const webImage = page?.original?.source;
-
-    imageCache[safeQuery] = webImage || fallbackImage(safeQuery);
-    return imageCache[safeQuery];
+    return page?.original?.source || "";
   } catch (error) {
-    console.error("Websuche für Kartenhintergrund fehlgeschlagen:", error);
-    imageCache[safeQuery] = fallbackImage(safeQuery);
-    return imageCache[safeQuery];
+    console.warn("Wikipedia-Bildsuche fehlgeschlagen:", error);
+    return "";
   }
 }
-
 function normalizeForSearch(text) {
   return String(text || "")
     .toLowerCase()
