@@ -50,6 +50,7 @@
 
 <div class="app">
 <h1>Wer bin ich?</h1>
+<button id="abortRoundBtn" class="hidden" onclick="abortRound()">Spiel abbrechen</button>
 
 <!-- Spieler anmelden -->
 <div id="registerDiv" class="hidden">
@@ -80,6 +81,8 @@
 <!-- Ergebnisse -->
 <div id="resultDiv" class="hidden">
   <h2>Ergebnisse</h2>
+  <button id="guessBtn" onclick="guessCharacter()">Erraten</button>
+  <p id="guessMsg"></p>
   <div id="results"></div>
 </div>
 </div>
@@ -125,6 +128,7 @@ async function registerPlayer() {
   currentPlayer = name;
   localStorage.setItem("werBinIchName", name);
 
+  await setDoc(doc(db, "players", name), { name, assignedTo: "", character: "", ownerId: clientId, guessed: false });
   await setDoc(doc(db, "players", name), { name, assignedTo: "", character: "", ownerId: clientId });
   document.getElementById("registerMsg").innerText = `Du bist angemeldet als ${name}`;
   document.getElementById("playerName").value = "";
@@ -132,6 +136,19 @@ async function registerPlayer() {
 }
 
 async function startRound() {
+  // Sofort lokale Ansicht umschalten, auch falls die Remote-Aktualisierung fehlschlägt
+  roundStateCache = { phase: "register", hostId: clientId, startedAt: Date.now() };
+  showScreen("register");
+
+  try {
+    await setDoc(roundRef, roundStateCache);
+  } catch (error) {
+    console.error("Spielstart konnte nicht in Firestore gespeichert werden:", error);
+    alert("Spielstart lokal aktiviert. Falls andere Geräte nichts sehen, bitte Firestore-Regeln prüfen.");
+  }
+
+  await renderPlayers();
+  alert("Anmelden ist jetzt sichtbar. Als Starter kannst du Namen entfernen und dann auf 'Runde starten' klicken.");
   await setDoc(roundRef, { phase: "register", hostId: clientId, startedAt: Date.now() });
   showScreen("register");
   await renderPlayers();
@@ -166,6 +183,7 @@ function assignDerangement(players) {
 
 async function assignPlayers() {
   const snapshot = await getDocs(collection(db, "players"));
+  const players = snapshot.docs.map(d => d.data().name).filter(Boolean);
   const players = snapshot.docs.map(d => d.data().name);
 
   if (players.length < 2) {
@@ -183,6 +201,7 @@ async function assignPlayers() {
 }
 
 async function beginAssignment() {
+  const roundData = await getRoundDataSafe();
   const roundSnap = await getDoc(roundRef);
   const roundData = roundSnap.exists() ? roundSnap.data() : null;
 
@@ -194,6 +213,14 @@ async function beginAssignment() {
   const ok = await assignPlayers();
   if (!ok) return;
 
+  roundStateCache = { ...(roundStateCache || {}), phase: "assign", hostId: clientId };
+  try {
+    await updateDoc(roundRef, { phase: "assign" });
+  } catch (error) {
+    console.error("Rundenphase konnte nicht gespeichert werden:", error);
+    showScreen("assign");
+    await loadAssignedPlayer();
+  }
   await updateDoc(roundRef, { phase: "assign" });
 }
 
@@ -220,6 +247,7 @@ async function submitCharacter() {
 }
 
 async function renderPlayers() {
+  const roundData = await getRoundDataSafe();
   const roundSnap = await getDoc(roundRef);
   const roundData = roundSnap.exists() ? roundSnap.data() : null;
 
@@ -229,6 +257,8 @@ async function renderPlayers() {
 
   snapshot.docs.forEach(d => {
     const data = d.data();
+    if (!data.name) return;
+
     const li = document.createElement("li");
     const text = document.createElement("span");
     text.textContent = data.name;
@@ -245,6 +275,11 @@ async function renderPlayers() {
   });
 
   document.getElementById("beginAssignBtn").classList.toggle("hidden", !isHost(roundData));
+  updateHostControls(roundData);
+}
+
+async function removePlayer(name) {
+  const roundData = await getRoundDataSafe();
 }
 
 async function removePlayer(name) {
@@ -270,11 +305,56 @@ async function showResult() {
   let html = "";
   snapshot.docs.forEach(d => {
     const data = d.data();
+    if (!data.name) return;
+    html += `<p>${data.name}: ${data.name === currentPlayer ? "???" : (data.character || "—")}${data.guessed ? " ✅ erraten" : ""}</p>`;
     html += `<p>${data.name}: ${data.name === currentPlayer ? "???" : (data.character || "—")}</p>`;
   });
   document.getElementById("results").innerHTML = html;
 }
 
+async function guessCharacter() {
+  if (!currentPlayer) {
+    alert("Bitte zuerst anmelden.");
+    return;
+  }
+
+  const meRef = doc(db, "players", currentPlayer);
+  const meSnap = await getDoc(meRef);
+  if (!meSnap.exists()) {
+    alert("Du bist aktuell nicht angemeldet.");
+    return;
+  }
+
+  await updateDoc(meRef, { guessed: true });
+  document.getElementById("guessMsg").innerText = "Du hast auf 'Erraten' gedrückt.";
+  await showResult();
+}
+
+async function abortRound() {
+  const roundData = await getRoundDataSafe();
+  if (!isHost(roundData)) {
+    alert("Nur der Starter kann das Spiel abbrechen.");
+    return;
+  }
+
+  const playersSnap = await getDocs(collection(db, "players"));
+  for (const playerDoc of playersSnap.docs) {
+    await deleteDoc(doc(db, "players", playerDoc.id));
+  }
+
+  await deleteDoc(roundRef);
+  roundStateCache = null;
+  showScreen("start");
+  updateHostControls(null);
+  alert("Spiel wurde abgebrochen.");
+}
+
+function subscribeRound() {
+  onSnapshot(roundRef, async (snap) => {
+    if (!snap.exists()) {
+      roundStateCache = null;
+      showScreen("start");
+      updateHostControls(null);
 function subscribeRound() {
   onSnapshot(roundRef, async (snap) => {
     if (!snap.exists()) {
@@ -283,6 +363,8 @@ function subscribeRound() {
     }
 
     const roundData = snap.data();
+    roundStateCache = roundData;
+    updateHostControls(roundData);
 
     if (roundData.phase === "register") {
       showScreen("register");
@@ -313,6 +395,11 @@ function subscribeRound() {
         await loadAssignedPlayer();
       }
     }
+  }, (error) => {
+    console.error("Live-Synchronisierung fehlgeschlagen:", error);
+    if (roundStateCache?.phase === "register") {
+      showScreen("register");
+    }
   });
 }
 
@@ -321,6 +408,8 @@ window.startRound = startRound;
 window.beginAssignment = beginAssignment;
 window.submitCharacter = submitCharacter;
 window.removePlayer = removePlayer;
+window.guessCharacter = guessCharacter;
+window.abortRound = abortRound;
 
 if (currentPlayer) {
   document.getElementById("registerMsg").innerText = `Du bist angemeldet als ${currentPlayer}`;
