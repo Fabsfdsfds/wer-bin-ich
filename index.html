@@ -69,10 +69,11 @@ let assignedPlayer = "";
 async function resetRound() {
   const snapshot = await getDocs(collection(db, "players"));
   for (const d of snapshot.docs) {
-    await deleteDoc(doc(db, "players", d.id));
+    await updateDoc(doc(db, "players", d.id), { assignedTo: "", character: "" });
   }
-  console.log("Alte Runde gelöscht!");
+  console.log("Alte Runde zurückgesetzt!");
 }
+
 
 // 🔹 Spieler anmelden
 async function registerPlayer() {
@@ -95,6 +96,7 @@ async function startRound() {
   const snapshot = await getDocs(collection(db, "players"));
   const players = snapshot.docs.map(doc => doc.data().name);
   if (players.length < 2) return alert("Mindestens 2 Spieler nötig!");
+
 
   // Shuffle Array
   const shuffled = [...players];
